@@ -1,0 +1,10 @@
+services:
+  linux-monitoring:
+    build: .
+    container_name: linux-monitoring
+    ports:
+      - "22:22"
+      - "20022:20022"
+      - "15034:15034"
+    tty: true
+    stdin_open: true
