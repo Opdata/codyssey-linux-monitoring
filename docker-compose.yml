@@ -1,9 +1,12 @@
 services:
   linux-monitoring:
-    build: .
+    image: linux-monitoring:step1-done
     container_name: linux-monitoring
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     ports:
-      - "22:22"
+      - "2222:22"
       - "20022:20022"
       - "15034:15034"
     tty: true

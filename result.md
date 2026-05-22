@@ -17,15 +17,6 @@
 
 ---
 
-## Step 0: 전제 확인
-
-```
-# lsb_release -a 출력 붙여넣기
-
-```
-
----
-
 ## Step 1: SSH 보안 설정
 
 ```
@@ -82,6 +73,21 @@
 
 ```
 # ls -ld /var/log/agent-app 출력 붙여넣기
+
+```
+
+```
+# getfacl /opt/agent/upload_files 출력 붙여넣기
+
+```
+
+```
+# getfacl /opt/agent/api_keys 출력 붙여넣기
+
+```
+
+```
+# getfacl /var/log/agent-app 출력 붙여넣기
 
 ```
 
