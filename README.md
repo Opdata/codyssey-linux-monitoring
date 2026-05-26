@@ -84,7 +84,7 @@ tee /etc/profile.d/agent.sh > /dev/null <<'EOF'
 export AGENT_HOME=/home/agent-admin/agent-app
 export AGENT_PORT=15034
 export AGENT_UPLOAD_DIR=$AGENT_HOME/upload_files
-export AGENT_KEY_PATH=$AGENT_HOME/api_keys/t_secret.key
+export AGENT_KEY_PATH=$AGENT_HOME/api_keys
 export AGENT_LOG_DIR=/var/log/agent-app
 EOF
 
@@ -92,13 +92,13 @@ chmod +x /etc/profile.d/agent.sh
 source /etc/profile.d/agent.sh
 ```
 
-| 변수             | 값                                                |
-| ---------------- | ------------------------------------------------- |
-| AGENT_HOME       | /home/agent-admin/agent-app                       |
-| AGENT_PORT       | 15034                                             |
-| AGENT_UPLOAD_DIR | /home/agent-admin/agent-app/upload_files          |
-| AGENT_KEY_PATH   | /home/agent-admin/agent-app/api_keys/t_secret.key |
-| AGENT_LOG_DIR    | /var/log/agent-app                                |
+| 변수             | 값                                       |
+| ---------------- | ---------------------------------------- |
+| AGENT_HOME       | /home/agent-admin/agent-app              |
+| AGENT_PORT       | 15034                                    |
+| AGENT_UPLOAD_DIR | /home/agent-admin/agent-app/upload_files |
+| AGENT_KEY_PATH   | /home/agent-admin/agent-app/api_keys     |
+| AGENT_LOG_DIR    | /var/log/agent-app                       |
 
 **확인**
 
@@ -106,7 +106,7 @@ source /etc/profile.d/agent.sh
 env | grep AGENT
 AGENT_UPLOAD_DIR=/home/agent-admin/agent-app/upload_files
 AGENT_PORT=15034
-AGENT_KEY_PATH=/home/agent-admin/agent-app/api_keys/t_secret.key
+AGENT_KEY_PATH=/home/agent-admin/agent-app/api_keys
 AGENT_HOME=/home/agent-admin/agent-app
 AGENT_LOG_DIR=/var/log/agent-app
 ```
@@ -114,19 +114,33 @@ AGENT_LOG_DIR=/var/log/agent-app
 ### Step 6: API 키 파일 생성
 
 ```bash
-echo "agent_api_key_test" > /home/agent-admin/agent-app/api_keys/t_secret.key
+echo "agent_api_key_test" > /home/agent-admin/agent-app/api_keys/secret.key
 ```
 
-- 경로: `/home/agent-admin/agent-app/api_keys/t_secret.key`
+- 경로: `/home/agent-admin/agent-app/api_keys/secret.key`
 - 내용: `agent_api_key_test`
 - 권한: `640` (agent-core 그룹 읽기만 가능)
 
 ### Step 7: 앱 배포 및 실행
 
-````bash
+```bash
 docker cp /Users/jun/Documents/GitHub/codyssey-work/linux-monitoring/agent-app/agent-app-linux-arm64 linux-monitoring:/home/agent-admin/agent-app/agent-app
 
 sudo -u agent-admin bash -c "source /etc/profile.d/agent.sh && /home/agent-admin/agent-app/agent-app"
+>>> Starting Agent Boot Sequence...
+[1/5] Checking User Account               [OK]
+   ... Running as service user 'agent-admin' (uid=1000)
+[2/5] Verifying Environment Variables     [OK]
+   ... All required Envs correct
+[3/5] Checking Required Files             [OK]
+   ... Verified 'secret.key' with correct key string.
+[4/5] Checking Port Availability          [OK]
+   ... Port 15034 is available.
+[5/5] Verifying Log Permission            [OK]
+   ... Log directory is writable: /var/log/agent-app
+------------------------------------------------------------
+All Boot Checks Passed!
+Agent READY
 ```
 
 - `/home/agent-admin/agent-app/agent-app` 배치 후 agent-admin 계정으로 실행 (non-root)
@@ -135,19 +149,51 @@ sudo -u agent-admin bash -c "source /etc/profile.d/agent.sh && /home/agent-admin
 
 ### Step 8: monitor.sh 작성
 
+**프로젝트 내 /bin/monitor.sh 참조**
+
+```bash
+chown agent-dev:agent-core /home/agent-admin/agent-app/bin/monitor.sh
+chmod 750 /home/agent-admin/agent-app/bin/monitor.sh
+```
+
 - 경로: `/home/agent-admin/agent-app/bin/monitor.sh`
 - 소유자: agent-dev / 그룹: agent-core / 권한: 750
 - 기능: 헬스체크 → 방화벽 확인 → 리소스 수집 → 임계값 경고 → 로그 기록
 
 ### Step 9: crontab 등록
 
+```bash
+sudo -u agent-admin crontab -e
+# 아래코드 스케쥴러에 등록
+* * * * * /bin/bash -c "source /etc/profile.d/agent.sh && /home/agent-admin/agent-app/bin/monitor.sh"
+
+# 등록확인
+sudo -u agent-admin crontab -l
+
+# cron 데몬 확인(not running 이면 restart 필요)
+service cron status
+service cron restart
+```
+
 - `agent-admin` 계정 crontab에 `* * * * *` 로 매분 실행 등록
 - 등록 후 1~2분 후 `/var/log/agent-app/monitor.log` 에 자동 누적 확인
 
 ### Step 10: 로그 파일 용량 관리
 
-- `/etc/logrotate.d/agent-monitor` 설정 추가
-- 10MB 초과 시 로테이션, 최대 10개 보관, 압축 적용
+```bash
+if [ -f "$LOG_FILE" ]; then
+    LOG_SIZE=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null)
+    if [ "$LOG_SIZE" -ge "$MAX_LOG_SIZE" ]; then
+        for i in $(seq $((MAX_LOG_FILES - 1)) -1 1); do
+            [ -f "${LOG_FILE}.${i}" ] && mv "${LOG_FILE}.${i}" "${LOG_FILE}.$((i + 1))"
+        done
+        mv "$LOG_FILE" "${LOG_FILE}.1"
+    fi
+fi
+```
+
+- monitor.sh 스크립트 내 로테이션 로직으로 구현
+- 10MB 초과 시 로테이션, 최대 10개 보관
 
 ---
 
@@ -161,7 +207,7 @@ sudo -u agent-admin bash -c "source /etc/profile.d/agent.sh && /home/agent-admin
 # grep -E '^Port|^PermitRootLogin' /etc/ssh/sshd_config
 Port 20022
 PermitRootLogin no
-````
+```
 
 ---
 
@@ -225,30 +271,85 @@ drwxrwx--- 2 root agent-core 4096 May 21 07:39 /var/log/agent-app
 
 ### 5. 앱 Boot Sequence 5단계 [OK] 및 "Agent READY" 확인
 
-- [ ] Boot Sequence 출력 확인
+- [x] Boot Sequence 출력 확인
+
+```bash
+sudo -u agent-admin bash -c "source /etc/profile.d/agent.sh && /home/agent-admin/agent-app/agent-app"
+>>> Starting Agent Boot Sequence...
+[1/5] Checking User Account               [OK]
+   ... Running as service user 'agent-admin' (uid=1000)
+[2/5] Verifying Environment Variables     [OK]
+   ... All required Envs correct
+[3/5] Checking Required Files             [OK]
+   ... Verified 'secret.key' with correct key string.
+[4/5] Checking Port Availability          [OK]
+   ... Port 15034 is available.
+[5/5] Verifying Log Permission            [OK]
+   ... Log directory is writable: /var/log/agent-app
+------------------------------------------------------------
+All Boot Checks Passed!
+Agent READY
+```
 
 ---
 
 ### 6. monitor.sh 실행 결과 (프로세스/포트/리소스/경고)
 
-- [ ] monitor.sh 실행 결과 확인
+- [x] monitor.sh 실행 결과 확인
+
+```bash
+sudo -u agent-admin bash -c "source /etc/profile.d/agent.sh && /home/agent-admin/agent-app/bin/monitor.sh"
+
+====== SYSTEM MONITOR RESULT ======
+
+[HEALTH CHECK]
+Checking process 'agent-app'... [OK] (PID: 434)
+Checking port 15034... [OK]
+
+[RESOURCE MONITORING]
+CPU Usage : 0.0%
+MEM Usage : 8.1%
+DISK Used  : 1%
+
+[INFO] Log appended: /var/log/agent-app/monitor.log
+======================================
+```
 
 ---
 
 ### 7. /var/log/agent-app/monitor.log 누적 기록 확인
 
-- [ ] 로그 누적 확인
+- [x] 로그 누적 확인
+
+```bash
+tail -f /var/log/agent-app/monitor.log
+
+[2026-05-22 11:29:01] PID:583 CPU:0.0% MEM:6.1% DISK_USED:1%
+[2026-05-22 11:30:01] PID:583 CPU:0.0% MEM:9.3% DISK_USED:1%
+[2026-05-22 11:31:01] PID:583 CPU:0.0% MEM:7.4% DISK_USED:1%
+[2026-05-22 11:32:02] PID:583 CPU:0.0% MEM:8.4% DISK_USED:1%
+[2026-05-22 11:33:01] PID:583 CPU:0.0% MEM:8.3% DISK_USED:1%
+```
 
 ---
 
 ### 8. crontab 매분 실행 등록 및 자동 실행 확인
 
-- [ ] crontab 등록 및 자동 실행 확인
-
----
-
-## monitor.sh 소스코드
+- [x] crontab 등록 및 자동 실행 확인
 
 ```bash
+sudo -u agent-admin crontab -l
+* * * * * /bin/bash -c "source /etc/profile.d/agent.sh && /home/agent-admin/agent-app/bin/monitor.sh"
 
+service cron status
+cron is running
+
+tail -f /var/log/agent-app/monitor.log (1분 간격 자동 누적 확인)
+[2026-05-22 11:29:01] PID:583 CPU:0.0% MEM:6.1% DISK_USED:1%
+[2026-05-22 11:30:01] PID:583 CPU:0.0% MEM:9.3% DISK_USED:1%
+[2026-05-22 11:31:01] PID:583 CPU:0.0% MEM:7.4% DISK_USED:1%
+[2026-05-22 11:32:02] PID:583 CPU:0.0% MEM:8.4% DISK_USED:1%
+[2026-05-22 11:33:01] PID:583 CPU:0.0% MEM:8.3% DISK_USED:1%
 ```
+
+---
